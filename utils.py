@@ -1,35 +1,26 @@
-############以下是utils文件
-#以下是utils.py
-
 import os
 import logging
 import torch
+from torch.optim.lr_scheduler import CyclicLR
 
 
 def get_logger(log_path: str) -> logging.Logger:
-    """
-    返回同时输出到文件和控制台的 logger。
-    """
     logger = logging.getLogger(__name__)
     logger.setLevel(logging.INFO)
 
-    # 确保日志目录存在
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
 
-    # 文件 Handler
     fh = logging.FileHandler(log_path)
     fh.setLevel(logging.INFO)
-    # 控制台 Handler
+
     ch = logging.StreamHandler()
     ch.setLevel(logging.INFO)
 
-    # 格式化
     fmt = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     formatter = logging.Formatter(fmt)
     fh.setFormatter(formatter)
     ch.setFormatter(formatter)
 
-    # 避免重复添加 handler
     if not logger.handlers:
         logger.addHandler(fh)
         logger.addHandler(ch)
@@ -38,23 +29,13 @@ def get_logger(log_path: str) -> logging.Logger:
 
 
 def save_model(model: torch.nn.Module, path: str, logger: logging.Logger) -> None:
-    """
-    保存 PyTorch 模型的 state_dict。
-    - model: 要保存的 nn.Module。
-    - path: 保存文件路径（含文件名，如 './ckpt/model.pth'）。
-    """
     os.makedirs(os.path.dirname(path), exist_ok=True)
     torch.save(model.state_dict(), path)
     logger.info(f"Model saved to {path}")
 
 
 def load_model(model: torch.nn.Module, path: str, device: torch.device, logger: logging.Logger) -> torch.nn.Module:
-    """
-    从指定路径加载 state_dict 到 model，并返回 model。
-    - model: 已实例化但未加载参数的 nn.Module。
-    - path: 保存的 state_dict 文件路径。
-    - device: 加载到的设备（cpu 或 cuda）。
-    """
+   
     if os.path.isfile(path):
         state = torch.load(path, map_location=device)
         model.load_state_dict(state)
@@ -62,7 +43,65 @@ def load_model(model: torch.nn.Module, path: str, device: torch.device, logger: 
     else:
         logger.warning(f"No checkpoint found at {path}, using fresh parameters.")
     return model
+
+
 def create_model(Model_class, config, logger):
     model = Model_class(config)
     logger.info("Created model with fresh parameters.")
     return model
+
+
+def configure_optimizers(model, config):
+    
+    hetero_params = []
+    other_decay_params = []
+    no_decay_params = []
+
+    for name, param in model.named_parameters():
+        if not param.requires_grad:
+            continue
+
+        if ('mask_dd' in name) or ('mask_pp' in name) or name.endswith('.bias') or ('temp' in name):
+            no_decay_params.append(param)
+        elif ('conv_dp' in name) or ('conv_pd' in name):
+            hetero_params.append(param)
+        else:
+            other_decay_params.append(param)
+
+    param_groups = []
+    het_wd = 0.01
+    other_wd = config.get('weight_decay', 0.0001)
+
+    if len(hetero_params) > 0:
+        param_groups.append({
+            'params': hetero_params,
+            'weight_decay': het_wd
+        })
+
+    if len(other_decay_params) > 0:
+        param_groups.append({
+            'params': other_decay_params,
+            'weight_decay': other_wd
+        })
+
+    if len(no_decay_params) > 0:
+        param_groups.append({
+            'params': no_decay_params,
+            'weight_decay': 0.0001
+        })
+
+    optim = torch.optim.Adam(param_groups, lr=config['lr'])
+
+    sched = None
+    if config.get('use_cyclic', False):
+        sched = CyclicLR(
+            optim,
+            base_lr=config['lr'] * config.get('lr_scale'),
+            max_lr=config['lr'],
+            step_size_up=config['step_size_up'],
+            mode='exp_range',
+            gamma=0.999,
+            cycle_momentum=False
+        )
+
+    return optim, sched
