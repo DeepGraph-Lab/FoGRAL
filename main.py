@@ -6,8 +6,7 @@ import torch
 from torch.utils.data import DataLoader, TensorDataset
 from collections import OrderedDict
 from copy import deepcopy
-
-from utils import get_logger
+from utils import configure_optimizers, get_logger
 from model import DrugRepositioningModel
 from data_reader import data_reader
 import evaluation
@@ -55,7 +54,6 @@ def config_model(args):
         lr_scale=0.1,
         step_size_up=2000,
         weight_decay=0.0001,
-        weight_decay_het=0.01,
     )
 
 def set_seed(seed):
@@ -74,7 +72,7 @@ def cross_validation(cfg):
     best_aucs, best_auprs = [], []
 
     for fold_idx, fold in enumerate(folds):
-        # 自动填充 disease/drug size
+        
         inter_np = fold['interactions']
         nd, npd = inter_np.shape
         cfg['disease_size'] = nd
@@ -94,7 +92,7 @@ def cross_validation(cfg):
         train_loader = DataLoader(train_ds, batch_size=min(cfg['batch_size'], len(train_ds)), shuffle=True)
 
         model = DrugRepositioningModel(cfg).to(device)
-        optimizer, scheduler = model.configure_optimizers(cfg)
+        optimizer, scheduler = configure_optimizers(model,cfg)
 
         best_val_auc = -1.0
         best_state = None
@@ -121,7 +119,6 @@ def cross_validation(cfg):
 
             model.step_temp()
 
-            # validation
             model.eval()
             with torch.no_grad():
                 vi, vj = torch.where(te_mask)
@@ -138,7 +135,6 @@ def cross_validation(cfg):
                 best_epoch = epoch
 
         final_state = deepcopy(model.state_dict())
-        # FINAL test
         model.load_state_dict(final_state)
         model.eval()
         with torch.no_grad():
@@ -149,7 +145,6 @@ def cross_validation(cfg):
         final_metrics = evaluation.evaluate(t_pred, t_true)
         logger.info(f"[Fold{fold_idx+1}] FINAL Test AUROC={final_metrics['auroc']:.4f} AUPR={final_metrics['aupr']:.4f}")
 
-        # BEST_BY_VAL test
         if best_state is not None:
             model.load_state_dict(best_state)
             model.eval()
