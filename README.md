@@ -7,7 +7,7 @@
 - The framework of FoGRAL is as follows:
 
 <br>
-<div align=left> <img src="pic/FoGRAL.svg" height="100%" width="100%"/> </div>
+<div align=left> <img src="FoGRAL.svg" height="100%" width="100%"/> </div>
 
 
 ## Install based on Ubuntu 22.04
